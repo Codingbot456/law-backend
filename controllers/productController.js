@@ -2,85 +2,94 @@ const db = require('../config/db'); // Import the MySQL connection pool
 
 // Create a product with optional images
 exports.createProduct = async (req, res) => {
-    const { 
-        name, 
-        price, 
-        description, 
-        category_id, 
-        subcategory_id, 
-        status_id, 
-        size_ids, 
-        color_ids, 
-        image_urls 
-    } = req.body;
-
+    const { name, price, description, category_id, subcategory_id, status_id, size_ids, color_ids } = req.body;
+    const image_urls = req.files.map(file => file.path); // Extract image paths from multer files
+  
+    // Log the received data
+    console.log('Received data:', {
+      name,
+      price,
+      description,
+      category_id,
+      subcategory_id,
+      status_id,
+      size_ids,
+      color_ids,
+      image_urls
+    });
+  
     if (!name || !price || !category_id || !subcategory_id || !status_id) {
-        return res.status(400).send('Name, price, category_id, subcategory_id, and status_id are required.');
+      console.error('Validation error: Missing required fields');
+      return res.status(400).send('Name, price, category_id, subcategory_id, and status_id are required.');
     }
-
+  
     try {
-        // Start a transaction
-        await db.query('START TRANSACTION');
-
-        // Insert product
-        const [result] = await db.query(
-            'INSERT INTO products (name, price, description, category_id, subcategory_id, status_id) VALUES (?, ?, ?, ?, ?, ?)',
-            [name, price, description, category_id, subcategory_id, status_id]
+      // Start a transaction
+      console.log('Starting transaction');
+      await db.query('START TRANSACTION');
+  
+      // Insert product
+      console.log('Inserting product into database');
+      const [result] = await db.query(
+        'INSERT INTO products (name, price, description, category_id, subcategory_id, status_id) VALUES (?, ?, ?, ?, ?, ?)',
+        [name, price, description, category_id, subcategory_id, status_id]
+      );
+      const productId = result.insertId;
+      console.log('Product inserted with ID:', productId);
+  
+      // Add sizes to product if provided
+      if (Array.isArray(size_ids) && size_ids.length > 0) {
+        const sizeValues = size_ids.map(size_id => [productId, size_id]);
+        console.log('Inserting sizes for product:', sizeValues);
+        await db.query(
+          'INSERT INTO product_sizes (product_id, size_id) VALUES ?',
+          [sizeValues]
         );
-        const productId = result.insertId;
-
-        // Add sizes to product if provided
-        if (Array.isArray(size_ids) && size_ids.length > 0) {
-            const sizeValues = size_ids.map(size_id => [productId, size_id]);
-            await db.query(
-                'INSERT INTO product_sizes (product_id, size_id) VALUES ?',
-                [sizeValues]
-            );
+      }
+  
+      // Add colors to product if provided
+      if (Array.isArray(color_ids) && color_ids.length > 0) {
+        const colorValues = color_ids.map(color_id => [productId, color_id]);
+        console.log('Inserting colors for product:', colorValues);
+        await db.query(
+          'INSERT INTO product_colors (product_id, color_id) VALUES ?',
+          [colorValues]
+        );
+      }
+  
+      // Add images to product if provided
+      if (Array.isArray(image_urls) && image_urls.length > 0) {
+        const imageInsertValues = image_urls.map(image_url => [image_url]);
+        console.log('Inserting images:', imageInsertValues);
+        const [imageInsertResults] = await db.query(
+          'INSERT INTO product_images (image_url) VALUES ?',
+          [imageInsertValues]
+        );
+  
+        const imageIds = Array.from({ length: imageInsertResults.affectedRows }, (_, i) => imageInsertResults.insertId + i);
+        if (imageIds.length > 0) {
+          const productImageValues = imageIds.map(image_id => [productId, image_id]);
+          console.log('Associating images with product:', productImageValues);
+          await db.query(
+            'INSERT INTO product_image (product_id, image_id) VALUES ?',
+            [productImageValues]
+          );
         }
-
-        // Add colors to product if provided
-        if (Array.isArray(color_ids) && color_ids.length > 0) {
-            const colorValues = color_ids.map(color_id => [productId, color_id]);
-            await db.query(
-                'INSERT INTO product_colors (product_id, color_id) VALUES ?',
-                [colorValues]
-            );
-        }
-
-        // Add images to product if provided
-        let imageIds = [];
-        if (Array.isArray(image_urls) && image_urls.length > 0) {
-            // Insert image URLs
-            const imageInsertValues = image_urls.map(image_url => [image_url]);
-            const [imageInsertResults] = await db.query(
-                'INSERT INTO product_images (image_url) VALUES ?',
-                [imageInsertValues]
-            );
-
-            // Retrieve the IDs of the newly inserted images
-            imageIds = Array.from({ length: imageInsertResults.affectedRows }, (_, i) => imageInsertResults.insertId + i);
-
-            // Associate images with the product
-            if (imageIds.length > 0) {
-                const productImageValues = imageIds.map(image_id => [productId, image_id]);
-                await db.query(
-                    'INSERT INTO product_image (product_id, image_id) VALUES ?',
-                    [productImageValues]
-                );
-            }
-        }
-
-        // Commit the transaction
-        await db.query('COMMIT');
-
-        res.status(201).send({ product_id: productId });
+      }
+  
+      // Commit the transaction
+      console.log('Committing transaction');
+      await db.query('COMMIT');
+  
+      res.status(201).send({ product_id: productId });
     } catch (err) {
-        // Rollback the transaction in case of an error
-        await db.query('ROLLBACK');
-        console.error('Error inserting product:', err);
-        res.status(500).send('Error inserting product');
+      // Rollback the transaction in case of an error
+      console.error('Error during transaction, rolling back:', err);
+      await db.query('ROLLBACK');
+      res.status(500).send('Error inserting product');
     }
-};
+  };
+  
 
 
 // Fetch a single product by ID, including status, category, subcategory, sizes, colors, and images
@@ -319,6 +328,49 @@ exports.getProductSizes = async (req, res) => {
         res.status(500).send('Error fetching product sizes');
     }
 };
+
+exports.getAllStatuses = async (req, res) => {
+    try {
+      const [statuses] = await db.query('SELECT * FROM product_statuses');
+      res.json(statuses);
+    } catch (err) {
+      console.error('Error fetching statuses:', err);
+      res.status(500).send('Error fetching statuses');
+    }
+  };
+  
+  // Handler to get subcategories by category
+  exports.getSubcategoriesByCategory = async (req, res) => {
+    const { category_id } = req.query; // Expecting 'category_id' as a query parameter
+  
+    if (!category_id) {
+      return res.status(400).send('Category ID is required');
+    }
+  
+    try {
+      const [subcategories] = await db.query(
+        'SELECT * FROM subcategories WHERE category_id = ?',
+        [category_id]
+      );
+      res.json(subcategories);
+    } catch (err) {
+      console.error('Error fetching subcategories:', err);
+      res.status(500).send('Error fetching subcategories');
+    }
+  };
+  
+  
+  
+  // Handler to get all categories
+  exports.getAllCategories = async (req, res) => {
+    try {
+      const [categories] = await db.query('SELECT * FROM product_categories');
+      res.json(categories);
+    } catch (err) {
+      console.error('Error fetching categories:', err);
+      res.status(500).send('Error fetching categories');
+    }
+  };
 
 // Create a color
 exports.createColor = async (req, res) => {

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const productController = require('../controllers/productController');
+const upload = require('../config/multerConfig');
 
 // Route to fetch products by category
 router.get('/products/category/:category_id', productController.getProductsByCategory);
@@ -10,7 +11,7 @@ router.get('/products/subcategory/:subcategory_id', productController.getProduct
 
 
 // Route to create a new product
-router.post('/products', productController.createProduct);
+router.post('/products', upload.array('images', 5), productController.createProduct);
 
 // Route to fetch all products
 router.get('/products', productController.getAllProducts);
@@ -57,4 +58,12 @@ router.post('/products/:product_id/images', productController.addProductImagesTo
 // Route to fetch images for a product
 router.get('/products/:product_id/images', productController.getProductImages);
 
+// Route to fetch all statuses
+router.get('/statuses', productController.getAllStatuses);
+
+router.get('/subcategories', productController.getSubcategoriesByCategory);
+
+
+// Route to fetch all categories
+router.get('/categories', productController.getAllCategories);
 module.exports = router;
