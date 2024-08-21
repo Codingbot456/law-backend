@@ -9,7 +9,6 @@ router.get('/products/category/:category_id', productController.getProductsByCat
 // Route to fetch products by subcategory
 router.get('/products/subcategory/:subcategory_id', productController.getProductsBySubcategory);
 
-
 // Route to create a new product
 router.post('/products', upload.array('images', 5), productController.createProduct);
 
@@ -18,6 +17,9 @@ router.get('/products', productController.getAllProducts);
 
 // Route to fetch a single product by ID
 router.get('/products/:id', productController.getProductById);
+
+// Route to update a product
+router.put('/products/:id', upload.array('images', 5), productController.updateProduct);
 
 // Route to fetch products by status
 router.get('/products/status/:status_id', productController.getProductsByStatus);
@@ -63,7 +65,7 @@ router.get('/statuses', productController.getAllStatuses);
 
 router.get('/subcategories', productController.getSubcategoriesByCategory);
 
-
 // Route to fetch all categories
 router.get('/categories', productController.getAllCategories);
+
 module.exports = router;

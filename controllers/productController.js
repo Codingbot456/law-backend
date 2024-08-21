@@ -1,95 +1,110 @@
 const db = require('../config/db'); // Import the MySQL connection pool
 
 // Create a product with optional images
+// controllers/productController.js
+const cloudinary = require('../config/cloudinaryConfig');
+
 exports.createProduct = async (req, res) => {
-    const { name, price, description, category_id, subcategory_id, status_id, size_ids, color_ids } = req.body;
-    const image_urls = req.files.map(file => file.path); // Extract image paths from multer files
-  
-    // Log the received data
-    console.log('Received data:', {
-      name,
-      price,
-      description,
-      category_id,
-      subcategory_id,
-      status_id,
-      size_ids,
-      color_ids,
-      image_urls
-    });
-  
-    if (!name || !price || !category_id || !subcategory_id || !status_id) {
-      console.error('Validation error: Missing required fields');
-      return res.status(400).send('Name, price, category_id, subcategory_id, and status_id are required.');
-    }
-  
-    try {
-      // Start a transaction
-      console.log('Starting transaction');
-      await db.query('START TRANSACTION');
-  
-      // Insert product
-      console.log('Inserting product into database');
-      const [result] = await db.query(
-        'INSERT INTO products (name, price, description, category_id, subcategory_id, status_id) VALUES (?, ?, ?, ?, ?, ?)',
-        [name, price, description, category_id, subcategory_id, status_id]
+  const { name, price, description, category_id, subcategory_id, status_id, size_ids, color_ids } = req.body;
+  const files = req.files; // Extract files from multer
+
+  // Log the received data
+  console.log('Received data:', {
+    name,
+    price,
+    description,
+    category_id,
+    subcategory_id,
+    status_id,
+    size_ids,
+    color_ids,
+    files
+  });
+
+  if (!name || !price || !category_id || !subcategory_id || !status_id) {
+    console.error('Validation error: Missing required fields');
+    return res.status(400).send('Name, price, category_id, subcategory_id, and status_id are required.');
+  }
+
+  try {
+    // Start a transaction
+    console.log('Starting transaction');
+    await db.query('START TRANSACTION');
+
+    // Insert product
+    console.log('Inserting product into database');
+    const [result] = await db.query(
+      'INSERT INTO products (name, price, description, category_id, subcategory_id, status_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [name, price, description, category_id, subcategory_id, status_id]
+    );
+    const productId = result.insertId;
+    console.log('Product inserted with ID:', productId);
+
+    // Add sizes to product if provided
+    if (Array.isArray(size_ids) && size_ids.length > 0) {
+      const sizeValues = size_ids.map(size_id => [productId, size_id]);
+      console.log('Inserting sizes for product:', sizeValues);
+      await db.query(
+        'INSERT INTO product_sizes (product_id, size_id) VALUES ?',
+        [sizeValues]
       );
-      const productId = result.insertId;
-      console.log('Product inserted with ID:', productId);
-  
-      // Add sizes to product if provided
-      if (Array.isArray(size_ids) && size_ids.length > 0) {
-        const sizeValues = size_ids.map(size_id => [productId, size_id]);
-        console.log('Inserting sizes for product:', sizeValues);
-        await db.query(
-          'INSERT INTO product_sizes (product_id, size_id) VALUES ?',
-          [sizeValues]
-        );
-      }
-  
-      // Add colors to product if provided
-      if (Array.isArray(color_ids) && color_ids.length > 0) {
-        const colorValues = color_ids.map(color_id => [productId, color_id]);
-        console.log('Inserting colors for product:', colorValues);
-        await db.query(
-          'INSERT INTO product_colors (product_id, color_id) VALUES ?',
-          [colorValues]
-        );
-      }
-  
-      // Add images to product if provided
-      if (Array.isArray(image_urls) && image_urls.length > 0) {
-        const imageInsertValues = image_urls.map(image_url => [image_url]);
-        console.log('Inserting images:', imageInsertValues);
-        const [imageInsertResults] = await db.query(
-          'INSERT INTO product_images (image_url) VALUES ?',
-          [imageInsertValues]
-        );
-  
-        const imageIds = Array.from({ length: imageInsertResults.affectedRows }, (_, i) => imageInsertResults.insertId + i);
-        if (imageIds.length > 0) {
-          const productImageValues = imageIds.map(image_id => [productId, image_id]);
-          console.log('Associating images with product:', productImageValues);
-          await db.query(
-            'INSERT INTO product_image (product_id, image_id) VALUES ?',
-            [productImageValues]
-          );
-        }
-      }
-  
-      // Commit the transaction
-      console.log('Committing transaction');
-      await db.query('COMMIT');
-  
-      res.status(201).send({ product_id: productId });
-    } catch (err) {
-      // Rollback the transaction in case of an error
-      console.error('Error during transaction, rolling back:', err);
-      await db.query('ROLLBACK');
-      res.status(500).send('Error inserting product');
     }
-  };
-  
+
+    // Add colors to product if provided
+    if (Array.isArray(color_ids) && color_ids.length > 0) {
+      const colorValues = color_ids.map(color_id => [productId, color_id]);
+      console.log('Inserting colors for product:', colorValues);
+      await db.query(
+        'INSERT INTO product_colors (product_id, color_id) VALUES ?',
+        [colorValues]
+      );
+    }
+
+    // Upload images to Cloudinary and get URLs
+    const uploadPromises = files.map(file => {
+      return new Promise((resolve, reject) => {
+        cloudinary.uploader.upload(file.path, { folder: 'products' }, (error, result) => {
+          if (error) return reject(error);
+          resolve(result.secure_url);
+        });
+      });
+    });
+
+    const imageUrls = await Promise.all(uploadPromises);
+
+    // Insert images into the database
+    if (Array.isArray(imageUrls) && imageUrls.length > 0) {
+      const imageInsertValues = imageUrls.map(image_url => [image_url]);
+      console.log('Inserting images:', imageInsertValues);
+      const [imageInsertResults] = await db.query(
+        'INSERT INTO product_images (image_url) VALUES ?',
+        [imageInsertValues]
+      );
+
+      const imageIds = Array.from({ length: imageInsertResults.affectedRows }, (_, i) => imageInsertResults.insertId + i);
+      if (imageIds.length > 0) {
+        const productImageValues = imageIds.map(image_id => [productId, image_id]);
+        console.log('Associating images with product:', productImageValues);
+        await db.query(
+          'INSERT INTO product_image (product_id, image_id) VALUES ?',
+          [productImageValues]
+        );
+      }
+    }
+
+    // Commit the transaction
+    console.log('Committing transaction');
+    await db.query('COMMIT');
+
+    res.status(201).send({ product_id: productId });
+  } catch (err) {
+    // Rollback the transaction in case of an error
+    console.error('Error during transaction, rolling back:', err);
+    await db.query('ROLLBACK');
+    res.status(500).send('Error inserting product');
+  }
+};
+
 
 
 // Fetch a single product by ID, including status, category, subcategory, sizes, colors, and images
@@ -165,24 +180,114 @@ exports.getProductById = async (req, res) => {
 
 
 // Fetch all products
+// Fetch all products with related sizes, colors, and images
 exports.getAllProducts = async (req, res) => {
     try {
-        const [rows] = await db.query(`
-            SELECT p.*, 
-                   s.status_name AS status, 
-                   c.category_name AS category, 
-                   sc.subcategory_name AS subcategory
+        // Fetch all product details including IDs for status, category, subcategory, sizes, and colors
+        const [products] = await db.query(`
+            SELECT p.product_id, 
+                   p.name, 
+                   p.price, 
+                   p.description,
+                   p.category_id, 
+                   p.subcategory_id, 
+                   p.status_id
             FROM products p
-            LEFT JOIN product_statuses s ON p.status_id = s.status_id
-            LEFT JOIN product_categories c ON p.category_id = c.category_id
-            LEFT JOIN subcategories sc ON p.subcategory_id = sc.subcategory_id
         `);
-        res.json(rows);
+
+        // Fetch categories by ID
+        const categoryIds = [...new Set(products.map(product => product.category_id))];
+        const [categories] = await db.query(`
+            SELECT category_id, category_name
+            FROM product_categories
+            WHERE category_id IN (?)
+        `, [categoryIds]);
+
+        // Fetch subcategories by ID
+        const subcategoryIds = [...new Set(products.map(product => product.subcategory_id))];
+        const [subcategories] = await db.query(`
+            SELECT subcategory_id, subcategory_name
+            FROM subcategories
+            WHERE subcategory_id IN (?)
+        `, [subcategoryIds]);
+
+        // Fetch statuses by ID
+        const statusIds = [...new Set(products.map(product => product.status_id))];
+        const [statuses] = await db.query(`
+            SELECT status_id, status_name
+            FROM product_statuses
+            WHERE status_id IN (?)
+        `, [statusIds]);
+
+        // Map IDs to names for categories, subcategories, and statuses
+        const categoryMap = Object.fromEntries(categories.map(cat => [cat.category_id, cat.category_name]));
+        const subcategoryMap = Object.fromEntries(subcategories.map(subcat => [subcat.subcategory_id, subcat.subcategory_name]));
+        const statusMap = Object.fromEntries(statuses.map(st => [st.status_id, st.status_name]));
+
+        // Assign names to products
+        products.forEach(product => {
+            product.category_name = categoryMap[product.category_id] || null;
+            product.subcategory_name = subcategoryMap[product.subcategory_id] || null;
+            product.status_name = statusMap[product.status_id] || null;
+        });
+
+        // Fetch sizes for each product
+        const sizeQueries = products.map(product => 
+            db.query(`
+                SELECT s.size_id, s.size_name
+                FROM product_sizes ps
+                JOIN sizes s ON ps.size_id = s.size_id
+                WHERE ps.product_id = ?
+            `, [product.product_id])
+        );
+        const sizeResults = await Promise.all(sizeQueries);
+
+        // Fetch colors for each product
+        const colorQueries = products.map(product => 
+            db.query(`
+                SELECT c.color_id, c.color_name
+                FROM product_colors pc
+                JOIN colors c ON pc.color_id = c.color_id
+                WHERE pc.product_id = ?
+            `, [product.product_id])
+        );
+        const colorResults = await Promise.all(colorQueries);
+
+        // Add sizes to products
+        products.forEach((product, index) => {
+            product.sizes = sizeResults[index][0] || [];
+        });
+
+        // Add colors to products
+        products.forEach((product, index) => {
+            product.colors = colorResults[index][0].map(color => ({ color_id: color.color_id, color_name: color.color_name }));
+        });
+
+        // Fetch images for each product
+        const imageQueries = products.map(product => 
+            db.query(`
+                SELECT img.image_url
+                FROM product_image pi
+                JOIN product_images img ON pi.image_id = img.image_id
+                WHERE pi.product_id = ?
+            `, [product.product_id])
+        );
+        const imageResults = await Promise.all(imageQueries);
+
+        // Add images to products
+        products.forEach((product, index) => {
+            product.images = imageResults[index][0].map(row => row.image_url);
+        });
+
+        // Send the combined result
+        res.json(products);
     } catch (err) {
         console.error('Error fetching products:', err);
         res.status(500).send('Error fetching products');
     }
 };
+
+
 
 // Fetch products by category
 exports.getProductsByCategory = async (req, res) => {
@@ -229,6 +334,122 @@ exports.getProductsBySubcategory = async (req, res) => {
         res.status(500).send('Error fetching products by subcategory');
     }
 };
+
+
+// Update an existing product with optional updates for sizes, colors, and images
+exports.updateProduct = async (req, res) => {
+    const { id } = req.params; // Product ID from URL parameters
+    const { name, price, description, category_id, subcategory_id, status_id, size_ids, color_ids, existing_images } = req.body;
+    const files = req.files; // Extract files from multer
+
+    // Extract new image paths if files are provided
+    const newImageUrls = files ? files.map(file => file.path) : [];
+    // Ensure that existing images are included if no new images are uploaded
+    const finalImageUrls = newImageUrls.length > 0 ? newImageUrls : existing_images || [];
+
+    // Log the received data
+    console.log('Received update data:', {
+        id,
+        name,
+        price,
+        description,
+        category_id,
+        subcategory_id,
+        status_id,
+        size_ids,
+        color_ids,
+        finalImageUrls
+    });
+
+    // Validate input
+    if (!name || !price || !category_id || !subcategory_id || !status_id) {
+        return res.status(400).send('Name, price, category_id, subcategory_id, and status_id are required.');
+    }
+
+    try {
+        // Start a transaction
+        console.log('Starting transaction');
+        await db.query('START TRANSACTION');
+
+        // Update product details
+        console.log('Updating product details');
+        await db.query(
+            'UPDATE products SET name = ?, price = ?, description = ?, category_id = ?, subcategory_id = ?, status_id = ? WHERE product_id = ?',
+            [name, price, description, category_id, subcategory_id, status_id, id]
+        );
+
+        // Update sizes if provided
+        if (Array.isArray(size_ids) && size_ids.length > 0) {
+            console.log('Updating sizes');
+            await db.query('DELETE FROM product_sizes WHERE product_id = ?', [id]);
+            const sizeValues = size_ids.map(size_id => [id, size_id]);
+            await db.query('INSERT INTO product_sizes (product_id, size_id) VALUES ?', [sizeValues]);
+        } else {
+            // If no sizes provided, clear existing sizes
+            await db.query('DELETE FROM product_sizes WHERE product_id = ?', [id]);
+        }
+
+        // Update colors if provided
+        if (Array.isArray(color_ids) && color_ids.length > 0) {
+            console.log('Updating colors');
+            await db.query('DELETE FROM product_colors WHERE product_id = ?', [id]);
+            const colorValues = color_ids.map(color_id => [id, color_id]);
+            await db.query('INSERT INTO product_colors (product_id, color_id) VALUES ?', [colorValues]);
+        } else {
+            // If no colors provided, clear existing colors
+            await db.query('DELETE FROM product_colors WHERE product_id = ?', [id]);
+        }
+
+        // Handle images
+        console.log('Updating images');
+        if (finalImageUrls.length > 0) {
+            // Clear existing images
+            await db.query('DELETE FROM product_image WHERE product_id = ?', [id]);
+
+            // Upload new images to Cloudinary and get URLs
+            const uploadPromises = finalImageUrls.map(url => {
+                return new Promise((resolve, reject) => {
+                    cloudinary.uploader.upload(url, { folder: 'products' }, (error, result) => {
+                        if (error) return reject(error);
+                        resolve(result.secure_url);
+                    });
+                });
+            });
+
+            const imageUrls = await Promise.all(uploadPromises);
+
+            // Insert new image records and associate them with the product
+            const [imageInsertResults] = await db.query(
+                'INSERT INTO product_images (image_url) VALUES ?',
+                [imageUrls.map(url => [url])]
+            );
+            const imageIds = Array.from({ length: imageInsertResults.affectedRows }, (_, i) => imageInsertResults.insertId + i);
+
+            // Associate new images with the product
+            const productImageValues = imageIds.map(image_id => [id, image_id]);
+            await db.query('INSERT INTO product_image (product_id, image_id) VALUES ?', [productImageValues]);
+        } else {
+            // If no images are provided, retain existing images
+            // This branch is effectively redundant since `finalImageUrls` will be used, 
+            // but it's kept for clarity.
+            await db.query('DELETE FROM product_image WHERE product_id = ?', [id]);
+        }
+
+        // Commit the transaction
+        console.log('Committing transaction');
+        await db.query('COMMIT');
+
+        res.status(200).send('Product updated successfully.');
+    } catch (err) {
+        // Rollback the transaction in case of an error
+        console.error('Error during transaction, rolling back:', err);
+        await db.query('ROLLBACK');
+        res.status(500).send('Error updating product');
+    }
+};
+
+
+
 
 
 // Fetch products by status

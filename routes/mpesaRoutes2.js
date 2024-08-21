@@ -1,35 +1,46 @@
 const express = require('express');
 const router = express.Router();
-const fs = require('fs');
 const moment = require('moment');
-const axios = require('axios');
-const { getAccessToken, processStkPush } = require('../services/mpesaService2');
-const db = require('../config/db'); // Add your database connection module
+const { getAccessToken, processStkPush, registerC2BUrl } = require('../services/mpesaService2');
 
 // Root route
 router.get("/", (req, res) => {
-  res.send("MPESA DARAJA API WITH NODE JS BY UMESKIA SOFTWARES");
   const timeStamp = moment().format("YYYYMMDDHHmmss");
-  console.log(timeStamp);
+  console.log("Root Route Hit. Current Timestamp:", timeStamp);
+  res.send("MPESA DARAJA API WITH NODE JS BY UMESKIA SOFTWARES");
 });
 
 // Access token route
 router.get("/access_token", (req, res) => {
   getAccessToken()
     .then((accessToken) => {
+      console.log("Access Token retrieved successfully:", accessToken);
       res.send("😀 Your access token is " + accessToken);
     })
-    .catch(console.log);
+    .catch((error) => {
+      console.error('Error fetching access token:', error.message);
+      res.status(500).send("Error fetching access token");
+    });
 });
 
 // STK push route
-router.post("/stkpush", (req, res) => {
+router.post("/stkpush2", (req, res) => {
   const { phoneNumber, amount, orderId } = req.body;
+
+  console.log("Received STK push request:");
+  console.log("Phone Number:", phoneNumber);
+  console.log("Amount:", amount);
+  console.log("Order ID:", orderId);
+
   getAccessToken()
     .then((accessToken) => {
+      console.log("Access Token retrieved for STK push");
       processStkPush(accessToken, phoneNumber, amount, orderId, req, res);
     })
-    .catch(console.log);
+    .catch((error) => {
+      console.error('Error processing STK push:', error.message);
+      res.status(500).send("❌ Request failed");
+    });
 });
 
 // STK push callback route
@@ -37,36 +48,43 @@ router.post("/callback", (req, res) => {
   console.log("STK PUSH CALLBACK RECEIVED:", JSON.stringify(req.body, null, 2));
 
   const { Body: { stkCallback } } = req.body;
-  const { CheckoutRequestID, ResultCode } = stkCallback;
-
-  console.log("CheckoutRequestID:", CheckoutRequestID);
-  console.log("ResultCode:", ResultCode);
+  const { CheckoutRequestID, ResultCode, ResultDesc } = stkCallback;
 
   const paymentStatus = ResultCode === 0 ? 'paid' : 'failed';
   const paymentDate = new Date();
 
-  const updateOrderStatus = `
-  UPDATE orders
-  SET payment_status = ?, payment_date = ?, payment_reference = ?, mpesa_receipt_number = ?, transaction_date = ?, phone_number = ?
-  WHERE payment_reference = ?`;
+  console.log(`Callback Data:`);
+  console.log(`CheckoutRequestID (Payment Reference): ${CheckoutRequestID}`);
+  console.log(`ResultCode: ${ResultCode}`);
+  console.log(`ResultDesc: ${ResultDesc}`);
+  console.log(`PaymentStatus: ${paymentStatus}`);
 
-  db.query(updateOrderStatus, [paymentStatus, paymentDate, CheckoutRequestID, CheckoutRequestID], (err, result) => {
+  const updateOrderStatus = `
+    UPDATE orders
+    SET payment_status = ?, payment_date = ?, payment_reference = ?
+    WHERE payment_reference = ?
+  `;
+
+  const parameters = [paymentStatus, paymentDate, CheckoutRequestID, CheckoutRequestID];
+
+  console.log("Executing SQL Query:", updateOrderStatus);
+  console.log("Parameters:", parameters);
+
+  db.query(updateOrderStatus, parameters, (err, result) => {
     if (err) {
-      console.error('Error updating order status:', err);
+      console.error('Error updating order status:', err.message);
       return res.status(500).send('Internal Server Error');
     }
 
-    console.log("Order status updated in database");
+    console.log("Order status updated in database:", result);
 
-    fs.writeFile("stkcallback.json", JSON.stringify(req.body, null, 2), "utf8", (err) => {
-      if (err) {
-        console.error('Error saving callback data:', err);
-        return res.status(500).send('Internal Server Error');
-      }
+    if (result.affectedRows === 0) {
+      console.warn('No rows updated. Check if payment_reference matches existing records.');
+    } else {
+      console.log(`Number of rows updated: ${result.affectedRows}`);
+    }
 
-      console.log("STK PUSH CALLBACK JSON FILE SAVED");
-      res.status(200).send('Order status updated successfully');
-    });
+    res.status(200).send('Order status updated successfully');
   });
 });
 
@@ -74,9 +92,13 @@ router.post("/callback", (req, res) => {
 router.get("/registerurl", (req, res) => {
   getAccessToken()
     .then((accessToken) => {
+      console.log("Access Token retrieved for C2B URL registration");
       registerC2BUrl(accessToken, res);
     })
-    .catch(console.log);
+    .catch((error) => {
+      console.error('Error fetching access token for C2B URL registration:', error.message);
+      res.status(500).send('Error fetching access token');
+    });
 });
 
 module.exports = router;

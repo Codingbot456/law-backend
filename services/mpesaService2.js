@@ -15,13 +15,18 @@ async function getAccessToken() {
   }
 }
 
-function processStkPush(accessToken, phoneNumber, amount, orderId, req, res) {
+function processStkPush(accessToken, phoneNumber, amount, transactionId, req, res) {
   const url = "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest";
   const auth = "Bearer " + accessToken;
   const timestamp = moment().format("YYYYMMDDHHmmss");
-  const password = Buffer.from(process.env.BUSINESS_SHORT_CODE + process.env.LIPA_NA_MPESA_ONLINE_PASSKEY + timestamp).toString("base64");
+  
+  // Create password
+  const password = Buffer.from(
+    `${process.env.BUSINESS_SHORT_CODE}${process.env.LIPA_NA_MPESA_ONLINE_PASSKEY}${timestamp}`
+  ).toString("base64");
 
-  axios.post(url, {
+  // Payload for STK Push
+  const payload = {
     BusinessShortCode: process.env.BUSINESS_SHORT_CODE,
     Password: password,
     Timestamp: timestamp,
@@ -31,17 +36,28 @@ function processStkPush(accessToken, phoneNumber, amount, orderId, req, res) {
     PartyB: process.env.BUSINESS_SHORT_CODE,
     PhoneNumber: phoneNumber,
     CallBackURL: process.env.CALLBACK_URL,
-    AccountReference: "Fashion-Clothing Shop",
+    AccountReference: 'trend-wear',  // Use transactionId instead of orderId
     TransactionDesc: "Fashion",
-  }, { headers: { Authorization: auth } })
-  .then((response) => {
-    console.log("STK push request sent");
-    res.send("😀 Request is successful done ✔✔. Please enter mpesa pin to complete the transaction");
-  })
-  .catch((error) => {
-    console.log(error);
-    res.status(500).send("❌ Request failed");
-  });
+  };
+
+  // Log the payload for debugging
+  console.log("STK Push Payload:", payload);
+
+  axios.post(url, payload, { headers: { Authorization: auth } })
+    .then((response) => {
+      // Log successful response details
+      console.log("STK Push Response:", response.data);
+      res.send("😀 Request is successfully done ✔✔. Please enter mpesa pin to complete the transaction");
+    })
+    .catch((error) => {
+      // Log error details
+      console.error("STK Push Request Failed:");
+      console.error("Status Code:", error.response ? error.response.status : 'No response status');
+      console.error("Status Text:", error.response ? error.response.statusText : 'No response status text');
+      console.error("Error Data:", error.response ? error.response.data : error.message);
+      console.error("Error Config:", error.config);
+      res.status(500).send("❌ Request failed");
+    });
 }
 
 function registerC2BUrl(accessToken, res) {
@@ -57,7 +73,8 @@ function registerC2BUrl(accessToken, res) {
     res.status(200).json(response.data);
   })
   .catch((error) => {
-    console.log(error);
+    console.log("Register C2B URL request failed");
+    console.error("Error:", error.response ? error.response.data : error.message);
     res.status(500).send("❌ Request failed");
   });
 }
@@ -67,5 +84,3 @@ module.exports = {
   processStkPush,
   registerC2BUrl,
 };
-
-//to notte//

@@ -46,25 +46,24 @@ const authRoutes = require('./routes/authRoutes');
 const passwordRoutes = require('./routes/passwordRoutes');
 const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
-const submissionsRoutes = require('./routes/submissions'); // Add submissions routes
-const blogRoutes = require('./routes/blogRoutes'); // Import blog routes
+const submissionsRoutes = require('./routes/submissions');
+const blogRoutes = require('./routes/blogRoutes');
 const mpesaRoutes = require('./routes/mpesaRoutes');
 const mpesaRoutes2 = require('./routes/mpesaRoutes2');
-
 const productRoutes = require('./routes/productRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 
-// Mounting routes
-app.use('/api', authRoutes);
-app.use('/api', passwordRoutes);
-app.use('/api', userRoutes);
-app.use('/api', adminRoutes);
-app.use('/api', mpesaRoutes);
-app.use('/api', mpesaRoutes2);
-app.use('/api', productRoutes);
+// Mounting routes with specific paths
+app.use('/api/auth', authRoutes);
+app.use('/api/password', passwordRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/mpesa', mpesaRoutes);
+app.use('/api/mpesa2', mpesaRoutes2);
+app.use('/api/products', productRoutes);
+app.use('/api/orders', orderRoutes);
 app.use('/api/submissions', submissionsRoutes); // Mount submissions routes
 app.use('/api/blog', blogRoutes); // Mount blog routes
-app.use('/api/orders', orderRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
