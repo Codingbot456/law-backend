@@ -54,13 +54,13 @@ const productRoutes = require('./routes/productRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 
 // Mounting routes with specific paths
-app.use('/api/auth', authRoutes);
+app.use('/api/', authRoutes);
 app.use('/api/password', passwordRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/admin', adminRoutes);
+app.use('/api', userRoutes);
+app.use('/api', adminRoutes);
 app.use('/api/mpesa', mpesaRoutes);
 app.use('/api/mpesa2', mpesaRoutes2);
-app.use('/api/products', productRoutes);
+app.use('/api', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/submissions', submissionsRoutes); // Mount submissions routes
 app.use('/api/blog', blogRoutes); // Mount blog routes
