@@ -46,11 +46,11 @@ const createOrder = async (req, res) => {
 
     const orderQuery = `
       INSERT INTO orders (
-        user_name, email, phone_number, address, city, state, zip_code, county_id, total_price, order_date
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        user_name, email, phone_number, address, city, state, zip_code, county_id, total_price, order_date, current_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     const [result] = await db.execute(orderQuery, [
-      user_name, email, phone_number, address, city, state, zip_code, county_id, finalTotalPrice.toFixed(2), order_date
+      user_name, email, phone_number, address, city, state, zip_code, county_id, finalTotalPrice.toFixed(2), order_date, 'pending'
     ]);
 
     const orderId = result.insertId;
@@ -93,7 +93,7 @@ const getOrders = async (req, res) => {
     SELECT 
       o.id, o.user_name, o.email, o.phone_number, o.address, o.city, o.state, o.zip_code,
       c.name AS county_name, c.shipping_fee AS county_shipping_fee,
-      o.total_price, o.order_date,
+      o.total_price, o.order_date, o.current_status,
       oi.product_id, oi.name AS product_name, oi.price AS product_price,
       oi.quantity, oi.total_price_item, oi.selected_color, oi.selected_sizes,
       oi.image_url, oi.subtotal_price
@@ -106,7 +106,7 @@ const getOrders = async (req, res) => {
     const [results] = await db.query(query);
     
     const orders = results.reduce((acc, order) => {
-      const { id, user_name, email, phone_number, address, city, state, zip_code, county_name, county_shipping_fee, total_price, order_date } = order;
+      const { id, user_name, email, phone_number, address, city, state, zip_code, county_name, county_shipping_fee, total_price, order_date, current_status } = order;
 
       let existingOrder = acc.find(o => o.id === id);
       if (!existingOrder) {
@@ -123,6 +123,7 @@ const getOrders = async (req, res) => {
           shipping_fee: county_shipping_fee,
           total_price,
           order_date,
+          current_status,
           items: []
         };
         acc.push(existingOrder);
@@ -153,6 +154,67 @@ const getOrders = async (req, res) => {
   }
 };
 
+// Update order status
+const updateOrderStatus = async (req, res) => {
+  const { order_id, new_status } = req.body;
+
+  console.log('Received request to update order status with:', { order_id, new_status });
+
+  // Validate new_status
+  const validStatuses = ['pending', 'in_transit', 'shipped', 'delivered'];
+  if (!validStatuses.includes(new_status)) {
+    console.error('Invalid status provided:', new_status);
+    return res.status(400).json({ error: 'Invalid status provided' });
+  }
+
+  // Fetch the current status of the order
+  const currentStatusQuery = 'SELECT current_status FROM orders WHERE id = ?';
+  try {
+    console.log('Executing query to fetch current status for order ID:', order_id);
+    const [currentStatusResult] = await db.execute(currentStatusQuery, [order_id]);
+    
+    console.log('Current status query result:', currentStatusResult);
+
+    if (currentStatusResult.length === 0) {
+      console.error('Order not found for ID:', order_id);
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const currentStatus = currentStatusResult[0].current_status;
+    console.log('Current status of order ID', order_id, ':', currentStatus);
+
+    // Only allow status transitions to the next status
+    const statusTransitionMap = {
+      'pending': ['in_transit'],
+      'in_transit': ['shipped'],
+      'shipped': ['delivered'],
+      'delivered': [] // No further status
+    };
+
+    if (!statusTransitionMap[currentStatus].includes(new_status)) {
+      console.error('Invalid status transition from', currentStatus, 'to', new_status);
+      return res.status(400).json({ error: 'Invalid status transition' });
+    }
+
+    const updateStatusQuery = 'UPDATE orders SET current_status = ? WHERE id = ?';
+    console.log('Executing query to update status for order ID:', order_id);
+    const [result] = await db.execute(updateStatusQuery, [new_status, order_id]);
+
+    console.log('Update status query result:', result);
+
+    if (result.affectedRows === 0) {
+      console.error('Order not found or no status updated for ID:', order_id);
+      return res.status(404).json({ error: 'Order not found or no status updated' });
+    }
+
+    console.log('Order status updated successfully for order ID:', order_id);
+    res.status(200).json({ message: 'Order status updated successfully' });
+  } catch (err) {
+    console.error('Error updating order status:', err);
+    res.status(500).json({ error: 'Error updating order status' });
+  }
+};
+
 // Endpoint to get all counties
 const getCounties = async (req, res) => {
   try {
@@ -164,8 +226,79 @@ const getCounties = async (req, res) => {
   }
 };
 
+// Get orders for a specific user
+const getUserOrders = async (req, res) => {
+  const userId = req.user.id; // Assuming you have user ID in req.user, set it according to your authentication middleware
+
+  const query = `
+    SELECT 
+      o.id, o.user_name, o.email, o.phone_number, o.address, o.city, o.state, o.zip_code,
+      c.name AS county_name, c.shipping_fee AS county_shipping_fee,
+      o.total_price, o.order_date, o.current_status,
+      oi.product_id, oi.name AS product_name, oi.price AS product_price,
+      oi.quantity, oi.total_price_item, oi.selected_color, oi.selected_sizes,
+      oi.image_url, oi.subtotal_price
+    FROM orders o
+    LEFT JOIN order_items oi ON o.id = oi.order_id
+    LEFT JOIN counties c ON o.county_id = c.id
+    WHERE o.email = ?
+  `;
+
+  try {
+    const [results] = await db.query(query, [userEmail]);
+    const orders = results.reduce((acc, order) => {
+      const { id, user_name, email, phone_number, address, city, state, zip_code, county_name, county_shipping_fee, total_price, order_date, current_status } = order;
+
+      let existingOrder = acc.find(o => o.id === id);
+      if (!existingOrder) {
+        existingOrder = {
+          id,
+          user_name,
+          email,
+          phone_number,
+          address,
+          city,
+          state,
+          zip_code,
+          county: county_name,
+          shipping_fee: county_shipping_fee,
+          total_price,
+          order_date,
+          current_status,
+          items: []
+        };
+        acc.push(existingOrder);
+      }
+
+      if (order.product_id) {
+        existingOrder.items.push({
+          product_id: order.product_id,
+          name: order.product_name,
+          price: order.product_price,
+          quantity: order.quantity,
+          total_price_item: order.total_price_item,
+          selected_color: order.selected_color,
+          selected_sizes: order.selected_sizes,
+          image_url: order.image_url,
+          subtotal_price: order.subtotal_price
+        });
+      }
+
+      return acc;
+    }, []);
+
+    res.json(orders);
+  } catch (err) {
+    console.error('Error fetching user orders:', err);
+    res.status(500).json({ error: 'Error fetching user orders' });
+  }
+};
+
+
 module.exports = {
   createOrder,
   getOrders,
-  getCounties
+  updateOrderStatus,
+  getCounties,
+  getUserOrders
 };
