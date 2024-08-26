@@ -3,6 +3,7 @@ const db = require('../config/db');
 // Create a new order
 const createOrder = async (req, res) => {
   const { 
+    user_id, // Added this line
     user_name, 
     email, 
     phone_number, 
@@ -17,6 +18,7 @@ const createOrder = async (req, res) => {
   } = req.body;
 
   console.log('Received request to create an order with the following details:');
+  console.log(`User ID: ${user_id}`); // Added this line
   console.log(`User Name: ${user_name}`);
   console.log(`Email: ${email}`);
   console.log(`Phone Number: ${phone_number}`);
@@ -46,11 +48,11 @@ const createOrder = async (req, res) => {
 
     const orderQuery = `
       INSERT INTO orders (
-        user_name, email, phone_number, address, city, state, zip_code, county_id, total_price, order_date, current_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        user_id, user_name, email, phone_number, address, city, state, zip_code, county_id, total_price, order_date, current_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     const [result] = await db.execute(orderQuery, [
-      user_name, email, phone_number, address, city, state, zip_code, county_id, finalTotalPrice.toFixed(2), order_date, 'pending'
+      user_id, user_name, email, phone_number, address, city, state, zip_code, county_id, finalTotalPrice.toFixed(2), order_date, 'pending'
     ]);
 
     const orderId = result.insertId;
@@ -86,6 +88,7 @@ const createOrder = async (req, res) => {
     res.status(500).json({ error: 'Error creating order' });
   }
 };
+
 
 // Get all orders
 const getOrders = async (req, res) => {
@@ -228,7 +231,9 @@ const getCounties = async (req, res) => {
 
 // Get orders for a specific user
 const getUserOrders = async (req, res) => {
-  const userId = req.user.id; // Assuming you have user ID in req.user, set it according to your authentication middleware
+  const userId = req.params.userId; // Extract user ID from URL parameters
+
+  console.log(`Fetching orders for user ID: ${userId}`);
 
   const query = `
     SELECT 
@@ -241,11 +246,11 @@ const getUserOrders = async (req, res) => {
     FROM orders o
     LEFT JOIN order_items oi ON o.id = oi.order_id
     LEFT JOIN counties c ON o.county_id = c.id
-    WHERE o.email = ?
+    WHERE o.user_id = ?
   `;
 
   try {
-    const [results] = await db.query(query, [userEmail]);
+    const [results] = await db.query(query, [userId]);
     const orders = results.reduce((acc, order) => {
       const { id, user_name, email, phone_number, address, city, state, zip_code, county_name, county_shipping_fee, total_price, order_date, current_status } = order;
 
@@ -287,13 +292,13 @@ const getUserOrders = async (req, res) => {
       return acc;
     }, []);
 
+    console.log(`Orders fetched for user ID ${userId}:`, orders);
     res.json(orders);
   } catch (err) {
     console.error('Error fetching user orders:', err);
     res.status(500).json({ error: 'Error fetching user orders' });
   }
 };
-
 
 module.exports = {
   createOrder,

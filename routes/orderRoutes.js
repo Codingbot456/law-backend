@@ -15,7 +15,7 @@ router.put('/status', updateOrderStatus);
 // Endpoint to get all counties
 router.get('/counties', getCounties);
 
-// Endpoint to get orders for a specific user
-router.get('/user-orders', getUserOrders);
+// Endpoint to get orders for a specific user by user ID
+router.get('/user-orders/:userId', getUserOrders);
 
 module.exports = router;
