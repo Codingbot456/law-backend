@@ -2,21 +2,12 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const multer = require('multer');
-const path = require('path');
+const cloudinary = require('../config/cloudinaryConfig');
 
-// Configure multer storage for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
-  },
-  filename: (req, file, cb) => {
-    const filename = Date.now() + path.extname(file.originalname);
-    console.log(`Uploading file: ${filename}`);
-    cb(null, filename);
-  }
-});
-
+// Configure multer to use memory storage
+const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
+
 const secretKey = process.env.JWT_SECRET;
 const baseUrl = process.env.BASE_URL || 'http://localhost:3000'; // Your base URL
 
@@ -24,7 +15,7 @@ const baseUrl = process.env.BASE_URL || 'http://localhost:3000'; // Your base UR
 const generateImageUrl = (filename) => {
   // Only generate the URL for responses
   if (!filename) return null;
-  const imageUrl = `${baseUrl}/uploads/${filename}`;
+  const imageUrl = filename.startsWith('http') ? filename : `${baseUrl}/uploads/${filename}`;
   console.log(`Generated image URL: ${imageUrl}`);
   return imageUrl;
 };
@@ -50,22 +41,32 @@ exports.getProfile = async (req, res) => {
 };
 
 // Update user profile with Multer for file uploads
-// Update user profile with Multer for file uploads
 exports.updateProfile = [
   upload.single('profileImage'), // Handle file upload
   async (req, res) => {
     const userId = req.user.id;
     const { name, email, phone, location, password } = req.body;
-    const profileImageFilename = req.file ? req.file.filename : null;
+    const profileImageFile = req.file;
 
-    // Base URL for the profile image
-    const baseUrl = process.env.BASE_URL || 'http://localhost:4000';
-    const profileImageUrl = profileImageFilename ? `${baseUrl}/uploads/${profileImageFilename}` : null;
+    let profileImageUrl = null;
 
-    console.log(`Updating profile for user ID: ${userId}`);
-    console.log(`Received profile image filename: ${profileImageFilename}`);
-    console.log(`Profile image URL: ${profileImageUrl}`);
-    console.log(`Profile update details: Name=${name}, Email=${email}, Phone=${phone}, Location=${location}, Password=${!!password}`);
+    if (profileImageFile) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream({
+            folder: 'profile_images',
+            resource_type: 'image'
+          }, (error, result) => {
+            if (error) return reject(error);
+            resolve(result.secure_url);
+          }).end(profileImageFile.buffer);
+        });
+        profileImageUrl = result;
+      } catch (error) {
+        console.error('Error uploading image to Cloudinary:', error);
+        return res.status(500).send({ msg: 'Image upload failed' });
+      }
+    }
 
     try {
       let updateQuery = 'UPDATE users SET name = ?, email = ?, phone = ?, location = ?';
@@ -93,6 +94,7 @@ exports.updateProfile = [
       // Retrieve the updated user profile
       const [updatedUser] = await db.execute('SELECT name, email, phone, location, profileImage FROM users WHERE id = ?', [userId]);
       if (updatedUser.length > 0) {
+        updatedUser[0].profileImage = generateImageUrl(updatedUser[0].profileImage);
         console.log(`Profile updated successfully. Updated details: ${JSON.stringify(updatedUser[0])}`);
       }
 
@@ -104,22 +106,32 @@ exports.updateProfile = [
   }
 ];
 
-
-// Register user with Multer for file uploads
 // Register user with Multer for file uploads
 exports.register = [
   upload.single('profileImage'), // Handle file upload
   async (req, res) => {
     const { name, email, password, location, phone, role = 'user' } = req.body;
-    const profileImageFilename = req.file ? req.file.filename : null;
+    const profileImageFile = req.file;
 
-    // Base URL for the profile image
-    const baseUrl = process.env.BASE_URL || 'http://localhost:4000';
-    const profileImageUrl = profileImageFilename ? `${baseUrl}/uploads/${profileImageFilename}` : null;
+    let profileImageUrl = null;
 
-    console.log(`Registering new user: ${name}`);
-    console.log(`Received profile image filename: ${profileImageFilename}`);
-    console.log(`Profile image URL: ${profileImageUrl}`);
+    if (profileImageFile) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream({
+            folder: 'profile_images',
+            resource_type: 'image'
+          }, (error, result) => {
+            if (error) return reject(error);
+            resolve(result.secure_url);
+          }).end(profileImageFile.buffer);
+        });
+        profileImageUrl = result;
+      } catch (error) {
+        console.error('Error uploading image to Cloudinary:', error);
+        return res.status(500).send({ msg: 'Image upload failed' });
+      }
+    }
 
     try {
       // Check if the email already exists
@@ -143,7 +155,6 @@ exports.register = [
     }
   }
 ];
-
 
 // Login
 exports.login = async (req, res) => {
@@ -227,5 +238,32 @@ exports.adminLogin = async (req, res) => {
   } catch (error) {
     console.error('Error logging in admin:', error);
     res.status(500).send({ msg: 'Database error' });
+  }
+};
+
+// Get all users and their roles including profile images
+exports.getAllUsers = async (req, res) => {
+  try {
+    // Fetch user details including profile image
+    const [users] = await db.execute('SELECT id, name, email, phone, location, role, profileImage FROM users');
+    
+    // If no users are found
+    if (users.length === 0) {
+      return res.status(404).send({ msg: 'No users found' });
+    }
+
+    // Generate full URLs for profile images
+    const usersWithImageUrls = users.map(user => {
+      if (user.profileImage) {
+        user.profileImage = generateImageUrl(user.profileImage);
+      }
+      return user;
+    });
+
+    console.log(`Retrieved all users: ${JSON.stringify(usersWithImageUrls)}`);
+    res.send(usersWithImageUrls);
+  } catch (error) {
+    console.error('Error getting all users:', error);
+    res.status(500).send({ msg: 'An error occurred. Please try again.' });
   }
 };

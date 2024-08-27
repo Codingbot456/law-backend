@@ -1,27 +1,18 @@
 const pool = require('../config/db');
 const multer = require('multer');
 const path = require('path');
+const cloudinary = require('../config/cloudinaryConfig'); // Import Cloudinary configuration
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + path.extname(file.originalname));
-  },
-});
-
+// Configure multer for file uploads (In-memory storage for Cloudinary)
+const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 const baseUrl = 'http://localhost:4000'; // Your base URL
 
-// Get all posts with detailed information
 // Get all posts with optional category filtering and detailed information
 exports.getPosts = async (req, res) => {
   const { category_id } = req.query; // Extract category_id from query parameters
 
   try {
-    // Prepare the SQL query with optional category filter
     let query = `
       SELECT p.*, u.name AS author_name, u.email AS author_email, u.profileImage AS author_profile_image, i.image_path, p.created_at
       FROM posts p
@@ -35,7 +26,6 @@ exports.getPosts = async (req, res) => {
 
     const [posts] = await pool.query(query, [category_id].filter(Boolean)); // Pass category_id if it exists
 
-    // Group images by post ID
     const postsWithDetails = posts.reduce((acc, row) => {
       const postId = row.id;
       if (!acc[postId]) {
@@ -59,7 +49,6 @@ exports.getPosts = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-
 
 // Get a single post by ID with detailed information
 exports.getPostById = async (req, res) => {
@@ -94,16 +83,25 @@ exports.createPost = async (req, res) => {
   const images = req.files; // Array of uploaded files
 
   try {
-    // Insert post into database
     const [result] = await pool.query('INSERT INTO posts (title, content, category_id, author_id) VALUES (?, ?, ?, ?)', [title, content, category_id, author_id]);
     const postId = result.insertId;
 
-    // Insert images into database with full URLs
     const imageUrls = [];
-    if (images) {
+    if (images && images.length > 0) {
       for (const file of images) {
-        const imageUrl = `${baseUrl}/uploads/${file.filename}`;
-        await pool.query('INSERT INTO images (post_id, image_path) VALUES (?, ?)', [postId, imageUrl]); // Store full URL
+        // Upload image to Cloudinary
+        const uploadResult = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream({ resource_type: 'auto' }, (error, result) => {
+            if (error) {
+              reject(new Error('Image upload failed'));
+            } else {
+              resolve(result);
+            }
+          }).end(file.buffer);
+        });
+
+        const imageUrl = uploadResult.secure_url; // Cloudinary URL
+        await pool.query('INSERT INTO images (post_id, image_path) VALUES (?, ?)', [postId, imageUrl]); // Store Cloudinary URL
         imageUrls.push(imageUrl);
       }
     }
@@ -122,16 +120,25 @@ exports.updatePost = async (req, res) => {
   const postId = req.params.id;
 
   try {
-    // Update post in database
     const [result] = await pool.query('UPDATE posts SET title = ?, content = ?, category_id = ?, author_id = ? WHERE id = ?', [title, content, category_id, author_id, postId]);
     if (result.affectedRows === 0) return res.status(404).json({ msg: 'Post not found' });
 
-    // Update images if any
     const imageUrls = [];
-    if (images) {
+    if (images && images.length > 0) {
       for (const file of images) {
-        const imageUrl = `${baseUrl}/uploads/${file.filename}`;
-        await pool.query('INSERT INTO images (post_id, image_path) VALUES (?, ?)', [postId, imageUrl]); // Store full URL
+        // Upload image to Cloudinary
+        const uploadResult = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream({ resource_type: 'auto' }, (error, result) => {
+            if (error) {
+              reject(new Error('Image upload failed'));
+            } else {
+              resolve(result);
+            }
+          }).end(file.buffer);
+        });
+
+        const imageUrl = uploadResult.secure_url; // Cloudinary URL
+        await pool.query('INSERT INTO images (post_id, image_path) VALUES (?, ?)', [postId, imageUrl]); // Store Cloudinary URL
         imageUrls.push(imageUrl);
       }
     }
@@ -147,10 +154,8 @@ exports.updatePost = async (req, res) => {
 exports.deletePost = async (req, res) => {
   const { id } = req.params;
   try {
-    // Delete images associated with the post
     await pool.query('DELETE FROM images WHERE post_id = ?', [id]);
     
-    // Delete the post
     const [result] = await pool.query('DELETE FROM posts WHERE id = ?', [id]);
     if (result.affectedRows === 0) return res.status(404).json({ msg: 'Post not found' });
 
@@ -249,14 +254,12 @@ exports.createPostTag = async (req, res) => {
 exports.likePost = async (req, res) => {
   const { id } = req.params;
   try {
-    // Increment like count
     const [result] = await pool.query('UPDATE posts SET likes = likes + 1 WHERE id = ?', [id]);
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ msg: 'Post not found' });
     }
 
-    // Get the updated post details
     const [updatedPost] = await pool.query('SELECT * FROM posts WHERE id = ?', [id]);
     
     res.json(updatedPost[0]);
@@ -278,7 +281,6 @@ exports.getPopularPosts = async (req, res) => {
       LIMIT 10
     `);
 
-    // Group images by post ID
     const postsWithDetails = posts.reduce((acc, row) => {
       const postId = row.id;
       if (!acc[postId]) {
@@ -301,6 +303,9 @@ exports.getPopularPosts = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+
+
 
 // Middleware for uploading images
 exports.uploadImages = upload.array('images'); // 'images' is the name of the file input field in your form

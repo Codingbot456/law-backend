@@ -82,4 +82,5 @@ router.get('/popular-posts', (req, res) => {
   blogController.getPopularPosts(req, res);
 });
 
+
 module.exports = router;
